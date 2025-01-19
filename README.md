@@ -1,6 +1,6 @@
-# @agentic
+# @cultores/agentic
 
-[![NPM Version](https://img.shields.io/npm/v/@agentic)](https://www.npmjs.com/package/@agentic)
+[![NPM Version](https://img.shields.io/npm/v/@cultores/agentic)](https://www.npmjs.com/package/@cultores/agentic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A powerful NestJS framework for building LLM-powered agents with ease and flexibility.
