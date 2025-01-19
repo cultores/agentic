@@ -1,6 +1,6 @@
 {
   "name": "@cultores/agentic",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A NestJS framework for building LLM-powered agents",
   "author": "Frederick Bejarano Sanchez",
   "private": false,
