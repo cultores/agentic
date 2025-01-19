@@ -4,6 +4,10 @@ export interface AgentState {
   messages: BaseMessage[];
   context?: Record<string, any>;
   metadata?: Record<string, any>;
+  loopControl?: {
+    iterations: Record<string, number>;
+    maxIterations?: Record<string, number>;
+  };
 }
 
 export interface AgentGraphOptions {
@@ -14,13 +18,16 @@ export interface AgentGraphOptions {
 export interface AgentNodeOptions {
   name: string;
   description?: string;
-  type?: 'tool' | 'llm' | 'chain';
+  type?: 'tool' | 'llm' | 'chain' | 'loop';
+  maxIterations?: number;
+  loopCondition?: (state: AgentState) => boolean;
 }
 
 export interface AgentEdgeOptions {
   from: string;
   to: string;
-  condition?: (state: AgentState) => string;
+  condition?: (state: AgentState) => string | undefined;
+  allowLoop?: boolean;
 }
 
 export interface AgencyConfig {
