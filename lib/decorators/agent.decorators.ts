@@ -20,6 +20,7 @@ export function AgentNode(options: AgentNodeOptions) {
   ) {
     const nodes = Reflect.getMetadata('agent:nodes', target.constructor) || [];
     nodes.push({
+      name: options.name,
       ...options,
       methodName: propertyKey,
       method: descriptor.value,
