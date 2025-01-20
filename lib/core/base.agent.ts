@@ -177,7 +177,7 @@ export abstract class BaseAgent {
           };
       }
     } catch (error) {
-      throw new Error(`Unable to execute node ${node.name}`);
+      throw error;
     }
 
     throw new Error(`Unable to execute node ${node.name}`);

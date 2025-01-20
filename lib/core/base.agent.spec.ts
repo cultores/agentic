@@ -1196,6 +1196,27 @@ describe('BaseAgent', () => {
         metadata: {}
       })).rejects.toThrow('Node target not found in graph');
     });
+
+    it('should throw error for missing tool by name', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        toolName: 'nonexistentTool',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Tool nonexistentTool not found');
+    });
   });
 
   describe('Message Creation', () => {
