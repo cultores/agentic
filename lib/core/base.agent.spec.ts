@@ -1272,6 +1272,72 @@ describe('BaseAgent', () => {
         metadata: {}
       })).rejects.toThrow('Node target not found in graph');
     });
+
+    it('should throw error for missing model in llm node', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model: 'nonexistentModel',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should throw error for llm node without model defined', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        methodName: 'testMethod',
+        model: undefined
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should handle llm node with model instance', async () => {
+      const model = {
+        invoke: jest.fn().mockResolvedValue({ content: 'test response' })
+      } as unknown as BaseLanguageModel;
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'test response');
+    });
   });
 
   describe('Message Creation', () => {
@@ -1447,27 +1513,6 @@ describe('BaseAgent', () => {
         type: 'tool',
         tool: undefined,
         toolName: undefined,
-        methodName: 'testMethod'
-      };
-
-      const input = {
-        state: {
-          messages: [],
-          context: {},
-          metadata: {}
-        }
-      };
-
-      await expect(agent['executeNode'](node, input))
-        .rejects
-        .toThrow('Unable to execute node testNode');
-    });
-
-    it('should throw error for missing model in llm node', async () => {
-      const node: AgentNodeDefinition = {
-        name: 'testNode',
-        type: 'llm',
-        model: 'nonexistentModel',
         methodName: 'testMethod'
       };
 
