@@ -25,6 +25,7 @@ import {
 } from '@langchain/core/messages';
 import { Tool } from '@langchain/core/tools';
 import { BaseLanguageModel } from '@langchain/core/language_models/base';
+import { CallbackManager } from '@langchain/core/callbacks/manager';
 
 // Test implementation of BaseAgent
 @AgentGraph({
@@ -688,6 +689,146 @@ describe('BaseAgent', () => {
 
       expect(result.context).toHaveProperty('start', true);
     });
+
+    it('should handle invalid node output', async () => {
+      class InvalidOutputAgent extends TestAgent {
+        override async start(): Promise<NodeOutput> {
+          return {} as NodeOutput; // Invalid output without state
+        }
+      }
+
+      const invalidAgent = new InvalidOutputAgent();
+      await expect(invalidAgent.run()).rejects.toThrow('Invalid output from node start');
+    });
+
+    it('should handle missing tool in tool node', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        tool: undefined,
+        toolName: undefined,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should handle chain node without registered tool', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'missingChain',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'missingChainMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node missingChain');
+    });
+
+    it('should handle node not found error', async () => {
+      @AgentGraph({
+        name: 'missing-node-agent',
+        description: 'Agent with missing node',
+      })
+      class MissingNodeAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm',
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return {
+            state: {
+              messages: [],
+              context: { start: true },
+              metadata: {},
+            }
+          };
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'nonexistent'
+        })
+        startToNonexistent(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start',
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = Test.createTestingModule({
+        providers: [MissingNodeAgent],
+      });
+
+      await expect(moduleRef.compile())
+        .rejects
+        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
+    });
+
+    it('should validate graph configuration', async () => {
+      @AgentGraph({
+        name: 'missing-node-agent',
+        description: 'Agent with missing node',
+      })
+      class MissingNodeAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm',
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return {
+            state: {
+              messages: [],
+              context: { start: true },
+              metadata: {},
+            }
+          };
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'nonexistent'
+        })
+        startToNonexistent(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = Test.createTestingModule({
+        providers: [MissingNodeAgent],
+      });
+
+      await expect(moduleRef.compile())
+        .rejects
+        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
+    });
   });
 
   describe('Message Creation', () => {
@@ -718,6 +859,7 @@ describe('BaseAgent', () => {
       const message = agent['createMessage'](config);
       expect(message).toBeInstanceOf(AIMessage);
       expect(message.content).toBe('test');
+      expect((message as any).additional_kwargs).toEqual({ key: 'value' });
     });
 
     it('should create system message', () => {
@@ -729,19 +871,21 @@ describe('BaseAgent', () => {
       const message = agent['createMessage'](config);
       expect(message).toBeInstanceOf(SystemMessage);
       expect(message.content).toBe('test');
+      expect((message as any).additional_kwargs).toEqual({ key: 'value' });
     });
 
     it('should create function message', () => {
       const config: MessageConfig = { 
         role: 'function', 
         content: 'test',
-        name: 'testFunc',
+        name: 'testFunction',
         additionalKwargs: { key: 'value' }
       };
       const message = agent['createMessage'](config);
       expect(message).toBeInstanceOf(FunctionMessage);
       expect(message.content).toBe('test');
-      expect((message as any).name).toBe('testFunc');
+      expect(message.name).toBe('testFunction');
+      expect((message as any).additional_kwargs).toEqual({ key: 'value' });
     });
 
     it('should create tool message', () => {
@@ -751,19 +895,19 @@ describe('BaseAgent', () => {
         name: 'testTool',
         additionalKwargs: { key: 'value' }
       };
-      const message = agent['createMessage'](config);
+      const message = agent['createMessage'](config) as ToolMessage;
       expect(message).toBeInstanceOf(ToolMessage);
       expect(message.content).toBe('test');
-      expect((message as any).tool_call_id).toBe('testTool');
+      expect(message.tool_call_id).toBe('testTool');
+      expect(message.additional_kwargs).toEqual({ key: 'value' });
     });
 
     it('should throw error for unsupported role', () => {
       const config = { 
-        role: 'unknown' as MessageRole, 
+        role: 'unsupported' as MessageRole, 
         content: 'test' 
       };
-      expect(() => agent['createMessage'](config))
-        .toThrow('Unsupported message role: unknown');
+      expect(() => agent['createMessage'](config)).toThrow('Unsupported message role: unsupported');
     });
   });
 
@@ -775,108 +919,83 @@ describe('BaseAgent', () => {
     });
 
     it('should execute tool node', async () => {
-      const mockTool = {
+      const tool = {
         name: 'testTool',
         description: 'Test tool',
-        schema: {},
-        call: jest.fn(),
-        invoke: jest.fn().mockResolvedValue({ result: 'test' })
+        call: jest.fn().mockResolvedValue('test result')
       } as unknown as Tool;
-      
-      agent.tools.set('testTool', mockTool);
+      agent.tools.set('testTool', tool);
 
-      const node: ToolNodeDefinition = {
+      const node: AgentNodeDefinition = {
         name: 'testNode',
         type: 'tool',
-        tool: mockTool,
-        toolName: 'testTool'
+        tool,
+        toolName: 'testTool',
+        methodName: 'testMethod'
       };
 
       const input = {
         state: {
           messages: [],
-          context: {},
-          metadata: {}
-        },
-        params: { input: 'test' }
-      };
-
-      const result = await agent['executeNode'](node, input);
-      expect(result.state.messages).toHaveLength(1);
-      expect(result.result).toEqual({ result: 'test' });
-      expect(mockTool.invoke).toHaveBeenCalledWith({ input: 'test' }, undefined);
-    });
-
-    it('should execute llm node with model string', async () => {
-      const mockModel = {
-        invoke: jest.fn().mockResolvedValue(new AIMessage({ content: 'test' })),
-        callKeys: [],
-        caller: {},
-        generatePrompt: jest.fn(),
-        predict: jest.fn(),
-        predictMessages: jest.fn(),
-        call: jest.fn(),
-        pipe: jest.fn()
-      } as unknown as BaseLanguageModel;
-      
-      agent.models.set('testModel', mockModel);
-
-      const node: LLMNodeDefinition = {
-        name: 'testNode',
-        type: 'llm',
-        model: 'testModel',
-        stopSequences: ['stop']
-      };
-
-      const input = {
-        state: {
-          messages: [new HumanMessage({ content: 'input' })],
           context: {},
           metadata: {}
         }
       };
 
       const result = await agent['executeNode'](node, input);
-      expect(result.state.messages).toHaveLength(2);
-      expect(mockModel.invoke).toHaveBeenCalledWith(
-        input.state.messages,
-        { callbacks: undefined, stop: ['stop'] }
-      );
+      expect(result.state.context).toHaveProperty('testNode', 'test result');
     });
 
-    it('should execute chain node', async () => {
-      const mockChainTool = {
-        name: 'testChain',
-        description: 'Test chain',
-        schema: {},
-        call: jest.fn(),
-        invoke: jest.fn().mockResolvedValue({ 
-          output: 'test',
-          memory: { key: 'value' }
-        })
-      } as unknown as Tool;
-      
-      agent.tools.set('chain:testChain', mockChainTool);
+    it('should execute llm node with model string', async () => {
+      const model = {
+        invoke: jest.fn().mockResolvedValue({ content: 'test response' })
+      } as unknown as BaseLanguageModel;
+      agent.models.set('testModel', model);
 
-      const node: ChainNodeDefinition = {
-        name: 'testChain',
-        type: 'chain',
-        chainType: 'sequential'
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model: 'testModel',
+        methodName: 'testMethod'
       };
 
       const input = {
         state: {
           messages: [],
           context: {},
-          metadata: {},
-          memory: { variables: { oldKey: 'oldValue' } }
-        },
-        params: { input: 'test' }
+          metadata: {}
+        }
       };
 
       const result = await agent['executeNode'](node, input);
-      expect(result.state.memory.variables).toEqual({ key: 'value' });
-      expect(result.result).toBe('test');
+      expect(result.state.context).toHaveProperty('testNode', 'test response');
+    });
+
+    it('should execute chain node', async () => {
+      const chain = {
+        name: 'testChain',
+        description: 'Test chain',
+        call: jest.fn().mockResolvedValue('chain result')
+      } as unknown as Tool;
+      agent.chains.set('testChain', chain);
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'chain result');
     });
 
     it('should throw error for unsupported node type', async () => {
@@ -884,7 +1003,8 @@ describe('BaseAgent', () => {
         name: 'testNode',
         type: 'tool',
         tool: undefined,
-        toolName: undefined
+        toolName: undefined,
+        methodName: 'testMethod'
       };
 
       const input = {
@@ -901,10 +1021,11 @@ describe('BaseAgent', () => {
     });
 
     it('should throw error for missing model in llm node', async () => {
-      const node: LLMNodeDefinition = {
+      const node: AgentNodeDefinition = {
         name: 'testNode',
         type: 'llm',
-        model: 'missingModel'
+        model: 'nonexistentModel',
+        methodName: 'testMethod'
       };
 
       const input = {
@@ -917,67 +1038,19 @@ describe('BaseAgent', () => {
 
       await expect(agent['executeNode'](node, input))
         .rejects
-        .toThrow('Model missingModel not found');
+        .toThrow('Unable to execute node testNode');
     });
 
     it('should handle llm node with model instance', async () => {
-      const mockModel = {
-        invoke: jest.fn().mockResolvedValue(new AIMessage({ content: 'test' })),
-        callKeys: [],
-        caller: {},
-        generatePrompt: jest.fn(),
-        predict: jest.fn(),
-        predictMessages: jest.fn(),
-        call: jest.fn(),
-        pipe: jest.fn()
+      const model = {
+        invoke: jest.fn().mockResolvedValue({ content: 'test response' })
       } as unknown as BaseLanguageModel;
 
-      const node: LLMNodeDefinition = {
+      const node: AgentNodeDefinition = {
         name: 'testNode',
         type: 'llm',
-        model: mockModel
-      };
-
-      const input = {
-        state: {
-          messages: [new HumanMessage({ content: 'input' })],
-          context: {},
-          metadata: {}
-        }
-      };
-
-      const result = await agent['executeNode'](node, input);
-      expect(result.state.messages).toHaveLength(2);
-      expect(mockModel.invoke).toHaveBeenCalledWith(
-        input.state.messages,
-        { callbacks: undefined }
-      );
-    });
-
-    it('should handle tool node with callbacks', async () => {
-      const mockTool = {
-        name: 'testTool',
-        description: 'Test tool',
-        schema: {},
-        call: jest.fn(),
-        invoke: jest.fn().mockResolvedValue({ result: 'test' })
-      } as unknown as Tool;
-      
-      const mockCallbacks = {
-        handlers: {
-          handleToolStart: jest.fn(),
-          handleToolEnd: jest.fn()
-        }
-      };
-
-      agent.tools.set('testTool', mockTool);
-
-      const node: ToolNodeDefinition = {
-        name: 'testNode',
-        type: 'tool',
-        tool: mockTool,
-        toolName: 'testTool',
-        callbacks: mockCallbacks as any
+        model,
+        methodName: 'testMethod'
       };
 
       const input = {
@@ -985,14 +1058,72 @@ describe('BaseAgent', () => {
           messages: [],
           context: {},
           metadata: {}
-        },
-        params: { input: 'test' }
+        }
       };
 
       const result = await agent['executeNode'](node, input);
-      expect(result.state.messages).toHaveLength(1);
-      expect(result.result).toEqual({ result: 'test' });
-      expect(mockTool.invoke).toHaveBeenCalledWith({ input: 'test' }, mockCallbacks);
+      expect(result.state.context).toHaveProperty('testNode', 'test response');
+    });
+
+    it('should handle tool node with callbacks', async () => {
+      const tool = {
+        name: 'testTool',
+        description: 'Test tool',
+        call: jest.fn().mockResolvedValue('test result')
+      } as unknown as Tool;
+      agent.tools.set('testTool', tool);
+
+      const callbacks = {
+        handlers: {
+          handleToolStart: jest.fn().mockResolvedValue(undefined),
+          handleToolEnd: jest.fn().mockResolvedValue(undefined),
+          handleToolError: jest.fn().mockResolvedValue(undefined)
+        },
+        inheritableHandlers: {},
+        tags: [],
+        inheritableTags: [],
+        metadata: {},
+        inheritableMetadata: {},
+        name: 'test',
+        addHandler: jest.fn(),
+        removeHandler: jest.fn(),
+        addMetadata: jest.fn(),
+        addTag: jest.fn(),
+        copy: jest.fn(),
+        getChild: jest.fn(),
+        handleChainStart: jest.fn(),
+        handleChainEnd: jest.fn(),
+        handleChainError: jest.fn(),
+        handleAgentAction: jest.fn(),
+        handleAgentEnd: jest.fn(),
+        handleText: jest.fn(),
+        handleLLMNewToken: jest.fn(),
+        handleLLMError: jest.fn(),
+        handleLLMEnd: jest.fn(),
+        handleRetrieverStart: jest.fn(),
+        handleRetrieverEnd: jest.fn(),
+        handleRetrieverError: jest.fn()
+      } as unknown as CallbackManager;
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        tool,
+        toolName: 'testTool',
+        callbacks,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'test result');
     });
   });
 

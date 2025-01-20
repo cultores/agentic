@@ -150,4 +150,75 @@ describe('BaseAgency', () => {
     expect(result).toBeDefined();
     expect(result.messages).toBeDefined();
   });
+
+  it('should handle parallel execution with no successful results', async () => {
+    const errorAgent1 = new class extends TestAgent {
+      async run(): Promise<AgentState> {
+        throw new Error('Error 1');
+      }
+    };
+    const errorAgent2 = new class extends TestAgent {
+      async run(): Promise<AgentState> {
+        throw new Error('Error 2');
+      }
+    };
+    
+    agency.registerAgent(errorAgent1);
+    agency.registerAgent(errorAgent2);
+    
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    
+    const result = await agency.execute(
+      { messages: [initialMessage], context: {}, metadata: {} },
+      { sequential: false, stopOnError: false }
+    );
+
+    // Should maintain initial state when no successful results
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe(input);
+  });
+
+  it('should handle parallel execution errors with stopOnError', async () => {
+    const errorAgent = new class extends TestAgent {
+      async run(): Promise<AgentState> {
+        throw new Error('Test parallel error');
+      }
+    };
+    
+    agency.registerAgent(errorAgent);
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    
+    await expect(agency.execute(
+      { messages: [initialMessage], context: {}, metadata: {} },
+      { sequential: false, stopOnError: true }
+    )).rejects.toThrow('Test parallel error');
+  });
+
+  it('should handle sequential execution with retries', async () => {
+    let attempts = 0;
+    const retryAgent = new class extends TestAgent {
+      async run(state: AgentState): Promise<AgentState> {
+        attempts++;
+        if (attempts < 2) {
+          throw new Error('Retry error');
+        }
+        return {
+          messages: [new HumanMessage('success')],
+          context: { success: true },
+          metadata: {}
+        };
+      }
+    };
+    
+    agency.registerAgent(retryAgent);
+    const result = await agency.execute(
+      { messages: [], context: {}, metadata: {} },
+      { maxRetries: 3 }
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.context).toHaveProperty('success', true);
+  });
 }); 

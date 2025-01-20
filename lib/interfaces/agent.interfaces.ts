@@ -86,10 +86,10 @@ export interface LoopNodeDefinition extends BaseNodeDefinition {
 }
 
 export type AgentNodeDefinition = 
-  | ToolNodeDefinition 
-  | LLMNodeDefinition 
-  | ChainNodeDefinition 
-  | LoopNodeDefinition;
+  | (ToolNodeDefinition & { methodName: string })
+  | (LLMNodeDefinition & { methodName: string })
+  | (ChainNodeDefinition & { methodName: string })
+  | (LoopNodeDefinition & { methodName: string });
 
 export interface AgentNodeOptions extends Omit<BaseNodeDefinition, 'type'> {
   type?: NodeType;
@@ -158,4 +158,8 @@ export interface MessageConfig {
   content: string;
   name?: string;
   additionalKwargs?: Record<string, unknown>;
+}
+
+export interface AgentEdgeDefinition extends AgentEdgeOptions {
+  methodName: string;
 }
