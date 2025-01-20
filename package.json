@@ -3,6 +3,11 @@
   "version": "0.1.2",
   "description": "A NestJS framework for building LLM-powered agents",
   "author": "Frederick Bejarano Sanchez",
+  "homepage": "https://github.com/cultores/agentic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cultores/agentic.git"
+  },
   "private": false,
   "license": "MIT",
   "main": "dist/index.js",
