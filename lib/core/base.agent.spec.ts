@@ -1534,4 +1534,24 @@ describe('BaseAgent', () => {
       expect(result).toBeUndefined();
     });
   });
+
+  describe('Base methods', () => {
+    it('should have a default start method that returns unmodified state', async () => {
+      @AgentGraph({
+        name: 'base-test',
+        description: 'Test base implementation'
+      })
+      class BaseTestAgent extends BaseAgent {}
+
+      const module = await Test.createTestingModule({
+        providers: [BaseTestAgent],
+      }).compile();
+
+      const agent = module.get<BaseTestAgent>(BaseTestAgent);
+      const initialState = { messages: [], context: { test: true }, metadata: {} };
+      const result = await agent['start']({ state: initialState });
+      
+      expect(result).toEqual({ state: initialState });
+    });
+  });
 }); 
