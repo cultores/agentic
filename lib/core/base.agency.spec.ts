@@ -29,17 +29,21 @@ class TestAgent extends BaseAgent {
   }
 }
 
+class UnnamedAgency extends BaseAgency {}
+
 describe('BaseAgency', () => {
   let agency: TestAgency;
   let agent: TestAgent;
+  let unnamedAgency: UnnamedAgency;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TestAgency, TestAgent],
+      providers: [TestAgency, TestAgent, UnnamedAgency],
     }).compile();
 
     agency = module.get<TestAgency>(TestAgency);
     agent = module.get<TestAgent>(TestAgent);
+    unnamedAgency = module.get<UnnamedAgency>(UnnamedAgency);
   });
 
   it('should be defined', () => {
@@ -220,5 +224,13 @@ describe('BaseAgency', () => {
 
     expect(attempts).toBe(2);
     expect(result.context).toHaveProperty('success', true);
+  });
+
+  it('should use default config from base Agency decorator', () => {
+    const config = unnamedAgency['getConfig']();
+    expect(config).toEqual({
+      name: 'base-agency',
+      description: 'Base agency implementation'
+    });
   });
 }); 
