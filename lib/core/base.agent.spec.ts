@@ -875,7 +875,35 @@ describe('BaseAgent', () => {
       expect(tool.call).toHaveBeenCalledWith({ test: true }, callbacks);
     });
 
-    it('should handle sequential chain execution', async () => {
+    it('should handle chain node', async () => {
+      const chain = {
+        name: 'testChain',
+        description: 'Test chain',
+        call: jest.fn().mockResolvedValue('chain result')
+      } as unknown as Tool;
+      agent.chains.set('testChain', chain);
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: undefined,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should execute sequential chain successfully', async () => {
       const chain = {
         name: 'testChain',
         description: 'Test chain',
@@ -1338,6 +1366,48 @@ describe('BaseAgent', () => {
       const result = await agent['executeNode'](node, input);
       expect(result.state.context).toHaveProperty('testNode', 'test response');
     });
+
+    it('should throw error for chain node without chainType', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: undefined,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should handle missing sequential chain', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
   });
 
   describe('Message Creation', () => {
@@ -1500,33 +1570,12 @@ describe('BaseAgent', () => {
           messages: [],
           context: {},
           metadata: {}
-        }
+        },
+        params: { test: true }
       };
 
       const result = await agent['executeNode'](node, input);
       expect(result.state.context).toHaveProperty('testNode', 'chain result');
-    });
-
-    it('should throw error for unsupported node type', async () => {
-      const node: AgentNodeDefinition = {
-        name: 'testNode',
-        type: 'tool',
-        tool: undefined,
-        toolName: undefined,
-        methodName: 'testMethod'
-      };
-
-      const input = {
-        state: {
-          messages: [],
-          context: {},
-          metadata: {}
-        }
-      };
-
-      await expect(agent['executeNode'](node, input))
-        .rejects
-        .toThrow('Unable to execute node testNode');
     });
 
     it('should handle llm node with model instance', async () => {
