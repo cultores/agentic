@@ -1217,6 +1217,61 @@ describe('BaseAgent', () => {
         .rejects
         .toThrow('Tool nonexistentTool not found');
     });
+
+    it('should handle node not found in nodeMap', async () => {
+      @AgentGraph({
+        name: 'missing-node-map-agent',
+        description: 'Agent with missing node in map'
+      })
+      class MissingNodeMapAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { 
+            state: {
+              ...input.state,
+              context: { start: true }
+            }
+          };
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target'
+        })
+        startToTarget(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [MissingNodeMapAgent]
+      }).compile();
+
+      const agent = moduleRef.get<MissingNodeMapAgent>(MissingNodeMapAgent);
+      
+      // Manipulate the nodeMap to remove the target node
+      const nodes = Reflect.getMetadata('nodes', MissingNodeMapAgent);
+      Reflect.defineMetadata('nodes', nodes.filter(n => n.name !== 'target'), MissingNodeMapAgent);
+      
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Node target not found in graph');
+    });
   });
 
   describe('Message Creation', () => {
