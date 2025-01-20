@@ -1,15 +1,44 @@
 import { Test } from '@nestjs/testing';
+import { Injectable } from '@nestjs/common';
 import { BaseAgent } from './base.agent';
 import { AgentNode, AgentEdge, AgentGraph } from '../decorators/agent.decorators';
-import { AgentState, NodeInput, NodeOutput } from '../interfaces/agent.interfaces';
+import { 
+  AgentState, 
+  NodeInput, 
+  NodeOutput,
+  NodeType,
+  AgentNodeDefinition,
+  ToolNodeDefinition,
+  LLMNodeDefinition,
+  ChainNodeDefinition,
+  AgentNodeOptions,
+  MessageRole,
+  MessageConfig
+} from '../interfaces/agent.interfaces';
+import { 
+  HumanMessage, 
+  AIMessage, 
+  SystemMessage, 
+  FunctionMessage, 
+  ToolMessage,
+  BaseMessage
+} from '@langchain/core/messages';
+import { Tool } from '@langchain/core/tools';
+import { BaseLanguageModel } from '@langchain/core/language_models/base';
 
 // Test implementation of BaseAgent
 @AgentGraph({
-  name: 'testGraph',
-  description: 'Test graph',
+  name: 'test-agent',
+  description: 'Test agent implementation',
 })
+@Injectable()
 class TestAgent extends BaseAgent {
   executionOrder: string[] = [];
+
+  // Make protected members accessible for testing
+  public override tools = new Map<string, Tool>();
+  public override models = new Map<string, BaseLanguageModel>();
+  public override chains = new Map<string, Tool>();
 
   @AgentNode({
     name: 'start',
@@ -658,6 +687,720 @@ describe('BaseAgent', () => {
       const result = await undefinedAgent.run(undefined as any);
 
       expect(result.context).toHaveProperty('start', true);
+    });
+  });
+
+  describe('Message Creation', () => {
+    let agent: TestAgent;
+
+    beforeEach(() => {
+      agent = new TestAgent();
+    });
+
+    it('should create human message', () => {
+      const config: MessageConfig = { 
+        role: 'human', 
+        content: 'test',
+        additionalKwargs: { key: 'value' }
+      };
+      const message = agent['createMessage'](config);
+      expect(message).toBeInstanceOf(HumanMessage);
+      expect(message.content).toBe('test');
+      expect((message as any).additional_kwargs).toEqual({ key: 'value' });
+    });
+
+    it('should create AI message', () => {
+      const config: MessageConfig = { 
+        role: 'ai', 
+        content: 'test',
+        additionalKwargs: { key: 'value' }
+      };
+      const message = agent['createMessage'](config);
+      expect(message).toBeInstanceOf(AIMessage);
+      expect(message.content).toBe('test');
+    });
+
+    it('should create system message', () => {
+      const config: MessageConfig = { 
+        role: 'system', 
+        content: 'test',
+        additionalKwargs: { key: 'value' }
+      };
+      const message = agent['createMessage'](config);
+      expect(message).toBeInstanceOf(SystemMessage);
+      expect(message.content).toBe('test');
+    });
+
+    it('should create function message', () => {
+      const config: MessageConfig = { 
+        role: 'function', 
+        content: 'test',
+        name: 'testFunc',
+        additionalKwargs: { key: 'value' }
+      };
+      const message = agent['createMessage'](config);
+      expect(message).toBeInstanceOf(FunctionMessage);
+      expect(message.content).toBe('test');
+      expect((message as any).name).toBe('testFunc');
+    });
+
+    it('should create tool message', () => {
+      const config: MessageConfig = { 
+        role: 'tool', 
+        content: 'test',
+        name: 'testTool',
+        additionalKwargs: { key: 'value' }
+      };
+      const message = agent['createMessage'](config);
+      expect(message).toBeInstanceOf(ToolMessage);
+      expect(message.content).toBe('test');
+      expect((message as any).tool_call_id).toBe('testTool');
+    });
+
+    it('should throw error for unsupported role', () => {
+      const config = { 
+        role: 'unknown' as MessageRole, 
+        content: 'test' 
+      };
+      expect(() => agent['createMessage'](config))
+        .toThrow('Unsupported message role: unknown');
+    });
+  });
+
+  describe('Node Execution', () => {
+    let agent: TestAgent;
+
+    beforeEach(() => {
+      agent = new TestAgent();
+    });
+
+    it('should execute tool node', async () => {
+      const mockTool = {
+        name: 'testTool',
+        description: 'Test tool',
+        schema: {},
+        call: jest.fn(),
+        invoke: jest.fn().mockResolvedValue({ result: 'test' })
+      } as unknown as Tool;
+      
+      agent.tools.set('testTool', mockTool);
+
+      const node: ToolNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        tool: mockTool,
+        toolName: 'testTool'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        },
+        params: { input: 'test' }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.messages).toHaveLength(1);
+      expect(result.result).toEqual({ result: 'test' });
+      expect(mockTool.invoke).toHaveBeenCalledWith({ input: 'test' }, undefined);
+    });
+
+    it('should execute llm node with model string', async () => {
+      const mockModel = {
+        invoke: jest.fn().mockResolvedValue(new AIMessage({ content: 'test' })),
+        callKeys: [],
+        caller: {},
+        generatePrompt: jest.fn(),
+        predict: jest.fn(),
+        predictMessages: jest.fn(),
+        call: jest.fn(),
+        pipe: jest.fn()
+      } as unknown as BaseLanguageModel;
+      
+      agent.models.set('testModel', mockModel);
+
+      const node: LLMNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model: 'testModel',
+        stopSequences: ['stop']
+      };
+
+      const input = {
+        state: {
+          messages: [new HumanMessage({ content: 'input' })],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.messages).toHaveLength(2);
+      expect(mockModel.invoke).toHaveBeenCalledWith(
+        input.state.messages,
+        { callbacks: undefined, stop: ['stop'] }
+      );
+    });
+
+    it('should execute chain node', async () => {
+      const mockChainTool = {
+        name: 'testChain',
+        description: 'Test chain',
+        schema: {},
+        call: jest.fn(),
+        invoke: jest.fn().mockResolvedValue({ 
+          output: 'test',
+          memory: { key: 'value' }
+        })
+      } as unknown as Tool;
+      
+      agent.tools.set('chain:testChain', mockChainTool);
+
+      const node: ChainNodeDefinition = {
+        name: 'testChain',
+        type: 'chain',
+        chainType: 'sequential'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {},
+          memory: { variables: { oldKey: 'oldValue' } }
+        },
+        params: { input: 'test' }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.memory.variables).toEqual({ key: 'value' });
+      expect(result.result).toBe('test');
+    });
+
+    it('should throw error for unsupported node type', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        tool: undefined,
+        toolName: undefined
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should throw error for missing model in llm node', async () => {
+      const node: LLMNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model: 'missingModel'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Model missingModel not found');
+    });
+
+    it('should handle llm node with model instance', async () => {
+      const mockModel = {
+        invoke: jest.fn().mockResolvedValue(new AIMessage({ content: 'test' })),
+        callKeys: [],
+        caller: {},
+        generatePrompt: jest.fn(),
+        predict: jest.fn(),
+        predictMessages: jest.fn(),
+        call: jest.fn(),
+        pipe: jest.fn()
+      } as unknown as BaseLanguageModel;
+
+      const node: LLMNodeDefinition = {
+        name: 'testNode',
+        type: 'llm',
+        model: mockModel
+      };
+
+      const input = {
+        state: {
+          messages: [new HumanMessage({ content: 'input' })],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.messages).toHaveLength(2);
+      expect(mockModel.invoke).toHaveBeenCalledWith(
+        input.state.messages,
+        { callbacks: undefined }
+      );
+    });
+
+    it('should handle tool node with callbacks', async () => {
+      const mockTool = {
+        name: 'testTool',
+        description: 'Test tool',
+        schema: {},
+        call: jest.fn(),
+        invoke: jest.fn().mockResolvedValue({ result: 'test' })
+      } as unknown as Tool;
+      
+      const mockCallbacks = {
+        handlers: {
+          handleToolStart: jest.fn(),
+          handleToolEnd: jest.fn()
+        }
+      };
+
+      agent.tools.set('testTool', mockTool);
+
+      const node: ToolNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        tool: mockTool,
+        toolName: 'testTool',
+        callbacks: mockCallbacks as any
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        },
+        params: { input: 'test' }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.messages).toHaveLength(1);
+      expect(result.result).toEqual({ result: 'test' });
+      expect(mockTool.invoke).toHaveBeenCalledWith({ input: 'test' }, mockCallbacks);
+    });
+  });
+
+  describe('Loop and Condition Handling', () => {
+    let agent: TestAgent;
+
+    beforeEach(() => {
+      agent = new TestAgent();
+    });
+
+    it('should initialize loop control', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const nodes = [
+        {
+          name: 'loop1',
+          type: 'loop' as NodeType,
+          maxIterations: 3
+        },
+        {
+          name: 'loop2',
+          type: 'loop' as NodeType,
+          maxIterations: 5
+        }
+      ];
+
+      const result = agent['initializeLoopControl'](state, nodes);
+      expect(result.loopControl).toBeDefined();
+      expect(result.loopControl.iterations).toEqual({});
+      expect(result.loopControl.maxIterations).toEqual({
+        loop1: 3,
+        loop2: 5
+      });
+    });
+
+    it('should increment loop count', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 1 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const result = agent['incrementLoopCount'](state, 'loop1');
+      expect(result.loopControl.iterations.loop1).toBe(2);
+    });
+
+    it('should initialize loop control when missing', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const result = agent['incrementLoopCount'](state, 'loop1');
+      expect(result.loopControl).toBeDefined();
+      expect(result.loopControl.iterations.loop1).toBe(1);
+    });
+
+    it('should check loop condition with max iterations', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 2 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const node = {
+        name: 'loop1',
+        type: 'loop' as NodeType,
+        method: jest.fn()
+      } as AgentNodeOptions & { name: string; method: Function };
+
+      const result = agent['checkLoopCondition'](state, node);
+      expect(result).toBe(true);
+    });
+
+    it('should stop loop when max iterations reached', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 3 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const node = {
+        name: 'loop1',
+        type: 'loop' as NodeType,
+        method: jest.fn()
+      } as AgentNodeOptions & { name: string; method: Function };
+
+      const result = agent['checkLoopCondition'](state, node);
+      expect(result).toBe(false);
+    });
+
+    it('should use custom loop condition when provided', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 1 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const node = {
+        name: 'loop1',
+        type: 'loop' as NodeType,
+        method: jest.fn(),
+        loopCondition: (state: AgentState) => state.loopControl.iterations.loop1 < 2
+      } as AgentNodeOptions & { name: string; method: Function };
+
+      const result = agent['checkLoopCondition'](state, node);
+      expect(result).toBe(true);
+
+      state.loopControl.iterations.loop1 = 2;
+      const result2 = agent['checkLoopCondition'](state, node);
+      expect(result2).toBe(false);
+    });
+
+    it('should handle missing loop control', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const node = {
+        name: 'loop1',
+        type: 'loop' as NodeType,
+        method: jest.fn()
+      } as AgentNodeOptions & { name: string; method: Function };
+
+      const result = agent['checkLoopCondition'](state, node);
+      expect(result).toBe(false);
+    });
+
+    it('should handle missing iterations or maxIterations', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: {},
+          maxIterations: {}
+        }
+      };
+
+      const node = {
+        name: 'loop1',
+        type: 'loop' as NodeType,
+        method: jest.fn()
+      } as AgentNodeOptions & { name: string; method: Function };
+
+      const result = agent['checkLoopCondition'](state, node);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('Edge Selection', () => {
+    let agent: TestAgent;
+
+    beforeEach(() => {
+      agent = new TestAgent();
+    });
+
+    it('should select next edge for standard node', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const edgeMap = new Map([
+        ['node1', [
+          {
+            from: 'node1',
+            to: 'node2',
+            methodName: 'edge1'
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['node1', {
+          name: 'node1',
+          type: 'tool' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>();
+
+      const result = agent['selectNextEdge']('node1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeDefined();
+      expect(result?.to).toBe('node2');
+    });
+
+    it('should handle loop node with continue condition', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 1 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const edgeMap = new Map([
+        ['loop1', [
+          {
+            from: 'loop1',
+            to: 'node2',
+            methodName: 'edge1',
+            allowLoop: true
+          },
+          {
+            from: 'loop1',
+            to: 'node3',
+            methodName: 'edge2',
+            allowLoop: false
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['loop1', {
+          name: 'loop1',
+          type: 'loop' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>();
+
+      const result = agent['selectNextEdge']('loop1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeDefined();
+      expect(result?.to).toBe('node2');
+      expect(result?.allowLoop).toBe(true);
+    });
+
+    it('should handle loop node with exit condition', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: { loop1: 3 },
+          maxIterations: { loop1: 3 }
+        }
+      };
+
+      const edgeMap = new Map([
+        ['loop1', [
+          {
+            from: 'loop1',
+            to: 'node2',
+            methodName: 'edge1',
+            allowLoop: true
+          },
+          {
+            from: 'loop1',
+            to: 'node3',
+            methodName: 'edge2',
+            allowLoop: false
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['loop1', {
+          name: 'loop1',
+          type: 'loop' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>();
+
+      const result = agent['selectNextEdge']('loop1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeDefined();
+      expect(result?.to).toBe('node3');
+      expect(result?.allowLoop).toBe(false);
+    });
+
+    it('should handle conditional edges', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const edgeMap = new Map([
+        ['node1', [
+          {
+            from: 'node1',
+            to: 'node2',
+            methodName: 'edge1',
+            condition: (state: AgentState) => 'node2'
+          },
+          {
+            from: 'node1',
+            to: 'node3',
+            methodName: 'edge2',
+            condition: (state: AgentState) => undefined
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['node1', {
+          name: 'node1',
+          type: 'tool' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>();
+
+      const result = agent['selectNextEdge']('node1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeDefined();
+      expect(result?.to).toBe('node2');
+    });
+
+    it('should skip visited edges unless loop allowed', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const edgeMap = new Map([
+        ['node1', [
+          {
+            from: 'node1',
+            to: 'node2',
+            methodName: 'edge1',
+            allowLoop: false
+          },
+          {
+            from: 'node1',
+            to: 'node3',
+            methodName: 'edge2',
+            allowLoop: true
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['node1', {
+          name: 'node1',
+          type: 'tool' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>(['node1->node2']);
+
+      const result = agent['selectNextEdge']('node1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeDefined();
+      expect(result?.to).toBe('node3');
+    });
+
+    it('should return undefined when no valid edge found', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {}
+      };
+
+      const edgeMap = new Map([
+        ['node1', [
+          {
+            from: 'node1',
+            to: 'node2',
+            methodName: 'edge1',
+            condition: (state: AgentState) => undefined
+          }
+        ]]
+      ]);
+
+      const nodeMap = new Map([
+        ['node1', {
+          name: 'node1',
+          type: 'tool' as NodeType,
+          method: jest.fn()
+        }]
+      ]);
+
+      const visitedEdges = new Set<string>();
+
+      const result = agent['selectNextEdge']('node1', state, edgeMap, nodeMap, visitedEdges);
+      expect(result).toBeUndefined();
     });
   });
 }); 

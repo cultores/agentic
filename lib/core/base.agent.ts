@@ -197,11 +197,14 @@ export abstract class BaseAgent {
     if (!state.loopControl) return false;
     if (!state.loopControl.iterations || !state.loopControl.maxIterations) return false;
     
-    const iterations = state.loopControl.iterations[node.name] || 0;
+    const iterations = state.loopControl.iterations[node.name];
     const maxIterations = state.loopControl.maxIterations[node.name];
     
+    // If either iterations or maxIterations is undefined for this node, stop the loop
+    if (iterations === undefined || maxIterations === undefined) return false;
+    
     // Check max iterations
-    if (maxIterations && iterations >= maxIterations) {
+    if (iterations >= maxIterations) {
       return false;
     }
 
@@ -210,8 +213,8 @@ export abstract class BaseAgent {
       return node.loopCondition(state);
     }
 
-    // If no condition is specified, don't loop
-    return false;
+    // If no condition is specified and max iterations not reached, continue loop
+    return true;
   }
 
   private selectNextEdge(
@@ -228,16 +231,16 @@ export abstract class BaseAgent {
     if (currentNodeObj?.type === 'loop') {
       // Check if we should continue looping
       const shouldContinueLoop = this.checkLoopCondition(currentState, currentNodeObj);
-      console.log('\n🔄 [selectNextEdge] Loop check:', {
-        shouldContinueLoop,
-        iterations: currentState.loopControl?.iterations?.[currentNodeObj.name],
-        maxIterations: currentState.loopControl?.maxIterations?.[currentNodeObj.name],
-        edges: outgoingEdges.map(e => ({
-          from: e.from,
-          to: e.to,
-          allowLoop: e.allowLoop
-        }))
-      });
+      // console.log('\n🔄 [selectNextEdge] Loop check:', {
+      //   shouldContinueLoop,
+      //   iterations: currentState.loopControl?.iterations?.[currentNodeObj.name],
+      //   maxIterations: currentState.loopControl?.maxIterations?.[currentNodeObj.name],
+      //   edges: outgoingEdges.map(e => ({
+      //     from: e.from,
+      //     to: e.to,
+      //     allowLoop: e.allowLoop
+      //   }))
+      // });
       
       // Find loop and exit edges
       const loopEdge = outgoingEdges.find(edge => edge.allowLoop);
@@ -248,8 +251,8 @@ export abstract class BaseAgent {
         return loopEdge;
       }
       
-      // Take exit edge if available
-      if (exitEdge) {
+      // Take exit edge if we should not continue looping
+      if (!shouldContinueLoop && exitEdge) {
         return exitEdge;
       }
     }
@@ -366,13 +369,13 @@ export abstract class BaseAgent {
           // Handle loop node
           if (nextNode.type === 'loop') {
             currentState = this.incrementLoopCount(currentState, nextNode.name);
-            console.log('\n🔍 [BaseAgent] Loop State:', {
-              nodeName: nextNode.name,
-              iterations: currentState.loopControl?.iterations[nextNode.name],
-              maxIterations: currentState.loopControl?.maxIterations[nextNode.name],
-              hasLoopCondition: !!nextNode.loopCondition,
-              constructor: this.constructor.name
-            });
+            // console.log('\n🔍 [BaseAgent] Loop State:', {
+            //   nodeName: nextNode.name,
+            //   iterations: currentState.loopControl?.iterations[nextNode.name],
+            //   maxIterations: currentState.loopControl?.maxIterations[nextNode.name],
+            //   hasLoopCondition: !!nextNode.loopCondition,
+            //   constructor: this.constructor.name
+            // });
           }
 
           // Execute node method
