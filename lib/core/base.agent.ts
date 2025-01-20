@@ -7,7 +7,12 @@ import {
 import { 
   AgentState, 
   AgentEdgeOptions,
-  AgentNodeOptions 
+  AgentNodeOptions,
+  AgentNodeDefinition,
+  EdgeDefinition,
+  NodeInput,
+  NodeOutput,
+  ValidationError
 } from '../interfaces/agent.interfaces';
 
 @AgentGraph({
@@ -16,24 +21,28 @@ import {
 })
 @Injectable()
 export abstract class BaseAgent {
-  protected tools: any[] = [];
-  protected nodes: any[] = [];
-  protected edges: any[] = [];
+  protected tools: Map<string, any> = new Map();
+  protected nodes: Map<string, AgentNodeDefinition> = new Map();
+  protected edges: Map<string, EdgeDefinition[]> = new Map();
+  protected validators: {
+    validateNode?: (node: AgentNodeDefinition) => ValidationError[];
+    validateEdge?: (edge: EdgeDefinition) => ValidationError[];
+  } = {};
 
   @AgentNode({
     name: 'start',
     description: 'Start node',
     type: 'llm',
   })
-  async start(state: AgentState) {
-    return { messages: state.messages };
+  async start(input: NodeInput): Promise<NodeOutput> {
+    return { state: input.state };
   }
 
   @AgentEdge({
     from: '__start__',
     to: 'start',
   })
-  startEdge(state: AgentState) {
+  startEdge(state: AgentState): AgentState {
     return state;
   }
 
