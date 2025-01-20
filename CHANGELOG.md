@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-01-20
+
+### Added
+- Added repository and homepage URLs to package.json
+- New examples structure with vanilla and NestJS implementations
+- Comprehensive examples showcasing different usage patterns
+- Basic examples demonstrating core functionality
+- Advanced examples showing complex workflows
+- Integration examples with external services
+
+### Changed
+- Reorganized examples into vanilla and NestJS categories
+- Updated package.json metadata
+
 ## [0.1.2] - 2025-01-20
 
 ### Added
