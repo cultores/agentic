@@ -1,12 +1,27 @@
-import { BaseMessage } from '@langchain/core/messages';
+import { 
+  BaseMessage,
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+  FunctionMessage,
+  ToolMessage
+} from '@langchain/core/messages';
+import { BaseLanguageModel } from '@langchain/core/language_models/base';
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { Tool } from '@langchain/core/tools';
+import { CallbackManager } from '@langchain/core/callbacks/manager';
 
 export interface AgentState {
   messages: BaseMessage[];
-  context?: Record<string, any>;
-  metadata?: Record<string, any>;
+  context?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   loopControl?: {
     iterations: Record<string, number>;
     maxIterations?: Record<string, number>;
+  };
+  memory?: {
+    chatHistory?: BaseMessage[];
+    variables?: Record<string, unknown>;
   };
 }
 
@@ -38,20 +53,30 @@ export interface BaseNodeDefinition {
 export interface ToolNodeDefinition extends BaseNodeDefinition {
   type: 'tool';
   toolName: string;
+  tool?: Tool;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  returnDirect?: boolean;
+  callbacks?: CallbackManager;
 }
 
 export interface LLMNodeDefinition extends BaseNodeDefinition {
   type: 'llm';
-  model: string;
+  model: string | BaseLanguageModel | BaseChatModel;
   temperature?: number;
   maxTokens?: number;
+  stopSequences?: string[];
+  callbacks?: CallbackManager;
 }
 
 export interface ChainNodeDefinition extends BaseNodeDefinition {
   type: 'chain';
-  steps: string[];
+  chainType: 'llm' | 'sequential' | 'transform' | 'conversation';
+  steps?: string[];
+  inputVariables?: string[];
+  outputVariables?: string[];
+  memory?: boolean;
+  callbacks?: CallbackManager;
 }
 
 export interface LoopNodeDefinition extends BaseNodeDefinition {
@@ -124,4 +149,13 @@ export interface AgencyExecutionConfig {
   sequential?: boolean;
   stopOnError?: boolean;
   maxRetries?: number;
+}
+
+export type MessageRole = 'human' | 'ai' | 'system' | 'function' | 'tool';
+
+export interface MessageConfig {
+  role: MessageRole;
+  content: string;
+  name?: string;
+  additionalKwargs?: Record<string, unknown>;
 }

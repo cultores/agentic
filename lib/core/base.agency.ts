@@ -65,17 +65,27 @@ export abstract class BaseAgency {
       );
 
       // Merge results from successful executions
+      let lastSuccessfulResult = null;
       results.forEach((result) => {
         if (result.status === 'fulfilled') {
+          lastSuccessfulResult = result.value;
           currentState = {
             ...currentState,
-            ...result.value,
-            messages: [...currentState.messages, ...result.value.messages],
+            context: { ...currentState.context, ...result.value.context },
+            metadata: { ...currentState.metadata, ...result.value.metadata },
           };
         } else if (stopOnError) {
           throw result.reason;
         }
       });
+
+      // Update messages to only keep initial and last message
+      if (lastSuccessfulResult) {
+        currentState.messages = [
+          currentState.messages[0], // Keep only the initial message
+          ...(lastSuccessfulResult.messages.slice(1)) // Add any new messages from the last successful result
+        ];
+      }
     }
 
     return currentState;

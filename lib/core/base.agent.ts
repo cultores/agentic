@@ -6,14 +6,29 @@ import {
 } from '../decorators/agent.decorators';
 import { 
   AgentState, 
-  AgentEdgeOptions,
+  AgencyConfig,
+  AgencyExecutionConfig,
+  NodeType,
   AgentNodeOptions,
+  AgentEdgeOptions,
   AgentNodeDefinition,
   EdgeDefinition,
   NodeInput,
   NodeOutput,
-  ValidationError
+  ValidationError,
+  MessageConfig,
+  MessageRole
 } from '../interfaces/agent.interfaces';
+import {
+  BaseMessage,
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+  FunctionMessage,
+  ToolMessage
+} from '@langchain/core/messages';
+import { Tool } from '@langchain/core/tools';
+import { BaseLanguageModel } from '@langchain/core/language_models/base';
 
 @AgentGraph({
   name: 'base-agent',
@@ -21,13 +36,113 @@ import {
 })
 @Injectable()
 export abstract class BaseAgent {
-  protected tools: Map<string, any> = new Map();
+  protected tools: Map<string, Tool> = new Map();
   protected nodes: Map<string, AgentNodeDefinition> = new Map();
   protected edges: Map<string, EdgeDefinition[]> = new Map();
+  protected models: Map<string, BaseLanguageModel> = new Map();
+  protected chains: Map<string, Tool> = new Map();
   protected validators: {
     validateNode?: (node: AgentNodeDefinition) => ValidationError[];
     validateEdge?: (edge: EdgeDefinition) => ValidationError[];
   } = {};
+
+  protected createMessage(config: MessageConfig): BaseMessage {
+    const { role, content, name, additionalKwargs } = config;
+    switch (role) {
+      case 'human':
+        return new HumanMessage({ content, additional_kwargs: additionalKwargs });
+      case 'ai':
+        return new AIMessage({ content, additional_kwargs: additionalKwargs });
+      case 'system':
+        return new SystemMessage({ content, additional_kwargs: additionalKwargs });
+      case 'function':
+        return new FunctionMessage({ content, name: name || 'function', additional_kwargs: additionalKwargs });
+      case 'tool':
+        return new ToolMessage({ content, tool_call_id: name || 'tool', additional_kwargs: additionalKwargs });
+      default:
+        throw new Error(`Unsupported message role: ${role}`);
+    }
+  }
+
+  protected async executeNode(node: AgentNodeDefinition, input: NodeInput): Promise<NodeOutput> {
+    switch (node.type) {
+      case 'tool':
+        if (node.tool) {
+          const result = await node.tool.invoke(input.params || {}, node.callbacks);
+          return {
+            state: {
+              ...input.state,
+              messages: [
+                ...input.state.messages,
+                this.createMessage({
+                  role: 'tool',
+                  content: JSON.stringify(result),
+                  name: node.toolName
+                })
+              ]
+            },
+            result
+          };
+        }
+        break;
+
+      case 'llm':
+        if (typeof node.model === 'string') {
+          const model = this.models.get(node.model);
+          if (!model) throw new Error(`Model ${node.model} not found`);
+          const result = await model.invoke(input.state.messages, {
+            callbacks: node.callbacks?.handlers,
+            stop: node.stopSequences
+          });
+          return {
+            state: {
+              ...input.state,
+              messages: [...input.state.messages, result]
+            },
+            result
+          };
+        } else if (node.model) {
+          const result = await node.model.invoke(input.state.messages, {
+            callbacks: node.callbacks
+          });
+          return {
+            state: {
+              ...input.state,
+              messages: [...input.state.messages, result]
+            },
+            result
+          };
+        }
+        break;
+
+      case 'chain':
+        const chainInput = {
+          input: input.params,
+          memory: input.state.memory?.variables,
+          callbacks: node.callbacks
+        };
+        
+        // Handle chain execution through a registered tool
+        const chainTool = this.tools.get(`chain:${node.name}`);
+        if (chainTool) {
+          const result = await chainTool.invoke(chainInput);
+          return {
+            state: {
+              ...input.state,
+              messages: [...input.state.messages],
+              memory: {
+                ...input.state.memory,
+                variables: result.memory
+              }
+            },
+            result: result.output
+          };
+        }
+        break;
+    }
+
+    throw new Error(`Unable to execute node ${node.name}`);
+  }
 
   @AgentNode({
     name: 'start',
@@ -63,11 +178,16 @@ export abstract class BaseAgent {
     };
   }
 
-  private incrementLoopCount(state: AgentState, nodeName: string): void {
-    if (!state.loopControl) {
-      state.loopControl = { iterations: {}, maxIterations: {} };
+  private incrementLoopCount(state: AgentState, nodeName: string): AgentState {
+    const newState = { ...state };
+    if (!newState.loopControl) {
+      newState.loopControl = { iterations: {}, maxIterations: {} };
     }
-    state.loopControl.iterations[nodeName] = (state.loopControl.iterations[nodeName] || 0) + 1;
+    if (!newState.loopControl.iterations) {
+      newState.loopControl.iterations = {};
+    }
+    newState.loopControl.iterations[nodeName] = (newState.loopControl.iterations[nodeName] || 0) + 1;
+    return newState;
   }
 
   private checkLoopCondition(
@@ -75,6 +195,7 @@ export abstract class BaseAgent {
     node: { name: string; method: Function } & AgentNodeOptions,
   ): boolean {
     if (!state.loopControl) return false;
+    if (!state.loopControl.iterations || !state.loopControl.maxIterations) return false;
     
     const iterations = state.loopControl.iterations[node.name] || 0;
     const maxIterations = state.loopControl.maxIterations[node.name];
@@ -89,32 +210,34 @@ export abstract class BaseAgent {
       return node.loopCondition(state);
     }
 
-    return true;
+    // If no condition is specified, don't loop
+    return false;
   }
 
   private selectNextEdge(
     currentNode: string,
     currentState: AgentState,
-    edgeMap: Map<string, (AgentEdgeOptions & { method: Function })[]>,
+    edgeMap: Map<string, (AgentEdgeOptions & { methodName: string })[]>,
     nodeMap: Map<string, { name: string; method: Function } & AgentNodeOptions>,
     visitedEdges: Set<string>
-  ): (AgentEdgeOptions & { method: Function }) | undefined {
+  ): (AgentEdgeOptions & { methodName: string }) | undefined {
     const outgoingEdges = edgeMap.get(currentNode) || [];
     const currentNodeObj = nodeMap.get(currentNode);
     
-    // Fast path for single edge without conditions
-    if (outgoingEdges.length === 1 && !outgoingEdges[0].condition) {
-      const edge = outgoingEdges[0];
-      const edgeId = `${edge.from}->${edge.to}`;
-      if (edge.allowLoop || !visitedEdges.has(edgeId)) {
-        return edge;
-      }
-    }
-
     // Special handling for loop nodes
     if (currentNodeObj?.type === 'loop') {
       // Check if we should continue looping
       const shouldContinueLoop = this.checkLoopCondition(currentState, currentNodeObj);
+      console.log('\n🔄 [selectNextEdge] Loop check:', {
+        shouldContinueLoop,
+        iterations: currentState.loopControl?.iterations?.[currentNodeObj.name],
+        maxIterations: currentState.loopControl?.maxIterations?.[currentNodeObj.name],
+        edges: outgoingEdges.map(e => ({
+          from: e.from,
+          to: e.to,
+          allowLoop: e.allowLoop
+        }))
+      });
       
       // Find loop and exit edges
       const loopEdge = outgoingEdges.find(edge => edge.allowLoop);
@@ -151,69 +274,128 @@ export abstract class BaseAgent {
     return undefined;
   }
 
-  async run(input: any): Promise<AgentState> {
-    console.log('\n📋 [BaseAgent] Starting execution with input:', JSON.stringify(input, null, 2));
-    
-    const nodes = Reflect.getMetadata('agent:nodes', this.constructor) || [];
-    const edges = Reflect.getMetadata('agent:edges', this.constructor) || [];
-    
-    console.log('\n🔍 [BaseAgent] Found nodes:', nodes.map(n => n.name).join(', '));
-    console.log('🔍 [BaseAgent] Found edges:', edges.map(e => `${e.from}->${e.to}`).join(', '));
-    
-    let currentState: AgentState = this.initializeLoopControl({
-      messages: [],
-      context: {},
-      metadata: {},
-      ...input,
-    }, nodes);
+  async run(input?: AgentState): Promise<AgentState> {
+    try {
+      // console.log('\n📋 [BaseAgent] Starting execution with input:', JSON.stringify(input, null, 2));
+      
+      const nodes = (Reflect.getMetadata('agent:nodes', this.constructor) || []).map(node => ({
+        ...node,
+        methodName: node.methodName
+      }));
+      const edges = Reflect.getMetadata('agent:edges', this.constructor) || [];
+      
+      // console.log('\n🔍 [BaseAgent] Found nodes:', nodes.map(n => n.name).join(', '));
+      // console.log('🔍 [BaseAgent] Found edges:', edges.map(e => `${e.from}->${e.to}`).join(', '));
+      
+      const defaultState: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+      };
+      
+      let currentState: AgentState = this.initializeLoopControl(
+        input || defaultState,
+        nodes
+      );
 
-    const nodeMap = new Map<string, { name: string; method: Function } & AgentNodeOptions>(
-      nodes.map(node => [node.name, node])
-    );
-    
-    const edgeMap = new Map<string, (AgentEdgeOptions & { method: Function })[]>();
-    for (const edge of edges) {
-      if (!edgeMap.has(edge.from)) {
-        edgeMap.set(edge.from, []);
+      type NodeMapValue = { 
+        name: string; 
+        type?: NodeType;
+        method: Function;
+        methodName: string;
+      } & AgentNodeOptions;
+
+      const nodeMap = new Map<string, NodeMapValue>(
+        nodes.map(node => [node.name, { 
+          name: node.name,
+          type: node.type,
+          method: node.method,
+          methodName: node.methodName,
+          ...node 
+        }])
+      );
+      
+      const edgeMap = new Map<string, (AgentEdgeOptions & { methodName: string })[]>();
+      for (const edge of edges) {
+        if (!edgeMap.has(edge.from)) {
+          edgeMap.set(edge.from, []);
+        }
+        edgeMap.get(edge.from)!.push({
+          ...edge,
+          methodName: edge.methodName
+        });
       }
-      edgeMap.get(edge.from)!.push(edge);
+
+      // Add the __start__ edge that directly executes the start node
+      edgeMap.set('__start__', [{
+        from: '__start__',
+        to: 'start',
+        methodName: 'startEdge'
+      }]);
+
+      let currentNode = '__start__';
+      const visitedEdges = new Set<string>();
+
+      // console.log('\n🚀 [BaseAgent] Starting graph traversal from __start__');
+
+      while (true) {
+        // console.log(`\n📍 [BaseAgent] Current node: ${currentNode}`);
+        
+        const nextEdge = this.selectNextEdge(currentNode, currentState, edgeMap, nodeMap, visitedEdges);
+        
+        if (!nextEdge) {
+          // console.log('🛑 [BaseAgent] No valid edge found, ending execution');
+          break;
+        }
+
+        const edgeId = `${nextEdge.from}->${nextEdge.to}`;
+        visitedEdges.add(edgeId);
+        // console.log(`\n➡️ [BaseAgent] Selected edge: ${edgeId}`);
+
+        try {
+          // Execute edge method
+          // console.log(`\n🔄 [BaseAgent] Executing edge method: ${nextEdge.methodName}`);
+          currentState = await this[nextEdge.methodName](currentState);
+          
+          // Get and validate next node
+          const nextNode = nodeMap.get(nextEdge.to);
+          if (!nextNode) {
+            throw new Error(`Node ${nextEdge.to} not found in graph`);
+          }
+
+          // Handle loop node
+          if (nextNode.type === 'loop') {
+            currentState = this.incrementLoopCount(currentState, nextNode.name);
+            console.log('\n🔍 [BaseAgent] Loop State:', {
+              nodeName: nextNode.name,
+              iterations: currentState.loopControl?.iterations[nextNode.name],
+              maxIterations: currentState.loopControl?.maxIterations[nextNode.name],
+              hasLoopCondition: !!nextNode.loopCondition,
+              constructor: this.constructor.name
+            });
+          }
+
+          // Execute node method
+          // console.log(`\n⚡ [BaseAgent] Executing node method: ${nextNode.methodName}`);
+          const nodeInput: NodeInput = { state: currentState };
+          const nodeOutput = await this[nextNode.methodName](nodeInput);
+          if (!nodeOutput || !nodeOutput.state) {
+            throw new Error(`Invalid output from node ${nextNode.name}`);
+          }
+          currentState = nodeOutput.state;
+          
+          currentNode = nextEdge.to;
+          // console.log(`\n✅ [BaseAgent] Node execution completed: ${currentNode}`);
+        } catch (error) {
+          console.log(`\n❌ [BaseAgent] Error in ${this.constructor.name}:`, error);
+          throw error;
+        }
+      }
+
+      // console.log('\n✅ [BaseAgent] Execution completed');
+      return currentState;
+    } catch (error) {
+      throw error;
     }
-
-    let currentNode = '__start__';
-    const visitedEdges = new Set<string>();
-
-    console.log('\n🚀 [BaseAgent] Starting graph traversal from __start__');
-
-    while (true) {
-      console.log(`\n📍 [BaseAgent] Current node: ${currentNode}`);
-      
-      const nextEdge = this.selectNextEdge(currentNode, currentState, edgeMap, nodeMap, visitedEdges);
-      
-      if (!nextEdge) {
-        console.log('🛑 [BaseAgent] No valid edge found, ending execution');
-        break;
-      }
-
-      const edgeId = `${nextEdge.from}->${nextEdge.to}`;
-      visitedEdges.add(edgeId);
-      console.log(`\n➡️ [BaseAgent] Selected edge: ${edgeId}`);
-
-      currentState = await nextEdge.method.call(this, currentState);
-      
-      const nextNode = nodeMap.get(nextEdge.to);
-      if (!nextNode) {
-        throw new Error(`Node ${nextEdge.to} not found in graph`);
-      }
-
-      if (nextNode.type === 'loop') {
-        this.incrementLoopCount(currentState, nextNode.name);
-      }
-
-      currentState = await nextNode.method.call(this, currentState);
-      currentNode = nextEdge.to;
-    }
-
-    console.log('\n✅ [BaseAgent] Execution completed');
-    return currentState;
   }
 }

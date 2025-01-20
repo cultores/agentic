@@ -86,4 +86,68 @@ describe('BaseAgency', () => {
     expect(result.context).toBeDefined();
     expect(result.metadata).toBeDefined();
   });
+
+  it('should handle errors during execution', async () => {
+    const errorAgent = new class extends TestAgent {
+      async run(): Promise<AgentState> {
+        throw new Error('Test error');
+      }
+    };
+    
+    agency.registerAgent(errorAgent);
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    
+    await expect(agency.execute({ 
+      messages: [initialMessage],
+      context: {},
+      metadata: {}
+    })).rejects.toThrow('Test error');
+  });
+
+  it('should handle parallel execution', async () => {
+    const agent1 = new TestAgent();
+    const agent2 = new TestAgent();
+    
+    agency.registerAgent(agent1);
+    agency.registerAgent(agent2);
+    
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    const result = await agency.execute(
+      { messages: [initialMessage], context: {}, metadata: {} },
+      { sequential: false }
+    );
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.context).toHaveProperty('processed', true);
+  });
+
+  it('should handle empty agent list', async () => {
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    
+    const result = await agency.execute({ 
+      messages: [initialMessage],
+      context: {},
+      metadata: {}
+    });
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe(input);
+  });
+
+  it('should validate execution config', async () => {
+    agency.registerAgent(agent);
+    const input = 'test input';
+    const initialMessage = new HumanMessage(input);
+    
+    const result = await agency.execute(
+      { messages: [initialMessage], context: {}, metadata: {} },
+      { sequential: true, stopOnError: true }
+    );
+
+    expect(result).toBeDefined();
+    expect(result.messages).toBeDefined();
+  });
 }); 

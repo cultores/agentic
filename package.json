@@ -17,6 +17,8 @@
     "format": "prettier --write \"lib/**/*.ts\"",
     "lint": "eslint \"{lib,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:cov": "jest --coverage",
+    "test:watch": "jest --watch",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
