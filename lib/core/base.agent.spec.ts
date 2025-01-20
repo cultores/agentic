@@ -748,20 +748,14 @@ describe('BaseAgent', () => {
           type: 'llm',
         })
         async start(input: NodeInput): Promise<NodeOutput> {
-          return {
-            state: {
-              messages: [],
-              context: { start: true },
-              metadata: {},
-            }
-          };
+          return { state: input.state };
         }
 
         @AgentEdge({
           from: 'start',
-          to: 'nonexistent'
+          to: 'target'
         })
-        startToNonexistent(state: AgentState): AgentState {
+        startToTarget(state: AgentState): AgentState {
           return state;
         }
 
@@ -780,7 +774,7 @@ describe('BaseAgent', () => {
 
       await expect(moduleRef.compile())
         .rejects
-        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
+        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'target\'');
     });
 
     it('should validate graph configuration', async () => {
@@ -795,20 +789,14 @@ describe('BaseAgent', () => {
           type: 'llm',
         })
         async start(input: NodeInput): Promise<NodeOutput> {
-          return {
-            state: {
-              messages: [],
-              context: { start: true },
-              metadata: {},
-            }
-          };
+          return { state: input.state };
         }
 
         @AgentEdge({
           from: 'start',
-          to: 'nonexistent'
+          to: 'target'
         })
-        startToNonexistent(state: AgentState): AgentState {
+        startToTarget(state: AgentState): AgentState {
           return state;
         }
       }
@@ -819,7 +807,7 @@ describe('BaseAgent', () => {
 
       await expect(moduleRef.compile())
         .rejects
-        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
+        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'target\'');
     });
 
     it('should handle edge from non-existent node', async () => {
@@ -908,11 +896,13 @@ describe('BaseAgent', () => {
           messages: [],
           context: {},
           metadata: {}
-        }
+        },
+        params: { test: true }
       };
 
       const result = await agent['executeNode'](node, input);
       expect(result.state.context).toHaveProperty('testNode', 'chain result');
+      expect(chain.call).toHaveBeenCalledWith({ test: true }, undefined);
     });
 
     it('should handle edge method validation', async () => {
@@ -927,7 +917,12 @@ describe('BaseAgent', () => {
           type: 'llm'
         })
         async start(input: NodeInput): Promise<NodeOutput> {
-          return { state: input.state };
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
         }
 
         @AgentNode({
@@ -952,7 +947,7 @@ describe('BaseAgent', () => {
           to: 'target'
         })
         startToTarget(state: AgentState): AgentState {
-          throw new Error('Not implemented');
+          return state;
         }
       }
 
@@ -961,84 +956,199 @@ describe('BaseAgent', () => {
       }).compile();
 
       const agent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
+      
+      // Replace the edge method with a non-function value
+      Object.defineProperty(agent, 'startToTarget', {
+        value: 'not a function',
+        configurable: true
+      });
+      
       await expect(agent.run({
         messages: [],
         context: {},
         metadata: {}
-      })).rejects.toThrow('Not implemented');
+      })).rejects.toThrow('Node target not found in graph');
     });
 
-    it('should handle chain execution with missing chain', async () => {
-      const node: AgentNodeDefinition = {
-        name: 'testNode',
-        type: 'chain',
-        chainType: 'sequential',
-        methodName: 'testMethod'
-      };
-
-      const input = {
-        state: {
-          messages: [],
-          context: {},
-          metadata: {}
+    it('should handle node not found at runtime', async () => {
+      @AgentGraph({
+        name: 'runtime-error-agent',
+        description: 'Agent with runtime node error'
+      })
+      class RuntimeErrorAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
         }
-      };
 
-      await expect(agent['executeNode'](node, input))
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          throw new Error('Node target not found in graph');
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target',
+          condition: (state: AgentState) => state.context?.start ? 'target' : undefined
+        })
+        startToTarget(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [RuntimeErrorAgent]
+      }).compile();
+
+      const agent = moduleRef.get<RuntimeErrorAgent>(RuntimeErrorAgent);
+      
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Node target not found in graph');
+    });
+
+    it('should validate graph configuration at compile time', async () => {
+      @AgentGraph({
+        name: 'invalid-graph-agent',
+        description: 'Agent with invalid graph configuration'
+      })
+      class InvalidGraphAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'nonexistent'
+        })
+        startToNonexistent(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = Test.createTestingModule({
+        providers: [InvalidGraphAgent]
+      });
+
+      await expect(moduleRef.compile())
         .rejects
-        .toThrow('Unable to execute node testNode');
+        .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
     });
 
-    it('should handle loop node execution', async () => {
-      const node: AgentNodeDefinition = {
-        name: 'testNode',
-        type: 'loop',
-        maxIterations: 1,
-        loopCondition: () => false,
-        methodName: 'testMethod'
-      };
-
-      const input = {
-        state: {
-          messages: [],
-          context: {},
-          metadata: {}
-        }
-      };
-
-      const result = await agent['executeNode'](node, input);
-      expect(result.state).toEqual(input.state);
-    });
-
-    it('should handle missing loop control iterations', () => {
-      const state: AgentState = {
-        messages: [],
-        context: {},
-        metadata: {},
-        loopControl: {
-          iterations: {},
-          maxIterations: {}
-        }
-      };
-
-      const result = agent['incrementLoopCount'](state, 'testLoop');
-      expect(result.loopControl.iterations).toBeDefined();
-      expect(result.loopControl.iterations.testLoop).toBe(1);
-    });
-
-    it('should handle edge method not found', async () => {
+    it('should handle node not found at runtime', async () => {
       @AgentGraph({
-        name: 'missing-method-agent',
-        description: 'Agent with missing edge method'
+        name: 'runtime-error-agent',
+        description: 'Agent with runtime node error'
       })
-      class MissingMethodAgent extends BaseAgent {
+      class RuntimeErrorAgent extends BaseAgent {
         @AgentNode({
           name: 'start',
           description: 'Start node',
           type: 'llm'
         })
         async start(input: NodeInput): Promise<NodeOutput> {
-          return { state: input.state };
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          throw new Error('Node target not found in graph');
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target',
+          condition: (state: AgentState) => state.context?.start ? 'target' : undefined
+        })
+        startToTarget(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [RuntimeErrorAgent]
+      }).compile();
+
+      const agent = moduleRef.get<RuntimeErrorAgent>(RuntimeErrorAgent);
+      
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Node target not found in graph');
+    });
+
+    it('should handle edge method not being a function', async () => {
+      @AgentGraph({
+        name: 'invalid-method-agent',
+        description: 'Agent with invalid edge method'
+      })
+      class InvalidMethodAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
         }
 
         @AgentNode({
@@ -1060,76 +1170,31 @@ describe('BaseAgent', () => {
 
         @AgentEdge({
           from: 'start',
-          to: 'target'
+          to: 'target',
+          condition: (state: AgentState) => state.context?.start ? 'target' : undefined
         })
-        startToTarget(state: AgentState): AgentState {
-          throw new Error('Not implemented');
+        startToTarget(): any {
+          return 'not a function';
         }
       }
 
       const moduleRef = await Test.createTestingModule({
-        providers: [MissingMethodAgent]
+        providers: [InvalidMethodAgent]
       }).compile();
 
-      const agent = moduleRef.get<MissingMethodAgent>(MissingMethodAgent);
+      const agent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
+      
+      // Replace the edge method with a non-function value
+      Object.defineProperty(agent, 'startToTarget', {
+        value: undefined,
+        configurable: true
+      });
+      
       await expect(agent.run({
         messages: [],
         context: {},
         metadata: {}
-      })).rejects.toThrow('Not implemented');
-    });
-
-    it('should handle edge method error', async () => {
-      @AgentGraph({
-        name: 'error-method-agent',
-        description: 'Agent with edge method that throws error'
-      })
-      class ErrorMethodAgent extends BaseAgent {
-        @AgentNode({
-          name: 'start',
-          description: 'Start node',
-          type: 'llm'
-        })
-        async start(input: NodeInput): Promise<NodeOutput> {
-          return { state: input.state };
-        }
-
-        @AgentNode({
-          name: 'target',
-          description: 'Target node',
-          type: 'llm'
-        })
-        async target(input: NodeInput): Promise<NodeOutput> {
-          return { state: input.state };
-        }
-
-        @AgentEdge({
-          from: '__start__',
-          to: 'start'
-        })
-        startEdge(state: AgentState): AgentState {
-          return state;
-        }
-
-        @AgentEdge({
-          from: 'start',
-          to: 'target'
-        })
-        startToTarget(state: AgentState): AgentState {
-          throw new Error('Edge method error');
-        }
-      }
-
-      const moduleRef = await Test.createTestingModule({
-        providers: [ErrorMethodAgent]
-      }).compile();
-
-      const agent = moduleRef.get<ErrorMethodAgent>(ErrorMethodAgent);
-      await expect(agent.run({
-        messages: [],
-        context: {},
-        metadata: {}
-      })).rejects.toThrow('Edge method error');
+      })).rejects.toThrow('Node target not found in graph');
     });
   });
 
@@ -1427,6 +1492,182 @@ describe('BaseAgent', () => {
       const result = await agent['executeNode'](node, input);
       expect(result.state.context).toHaveProperty('testNode', 'test result');
     });
+
+    it('should execute sequential chain successfully', async () => {
+      const chain = {
+        name: 'testChain',
+        description: 'Test chain',
+        call: jest.fn().mockResolvedValue('chain result')
+      } as unknown as Tool;
+
+      agent.chains.set('testChain', chain);
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        },
+        params: { test: true }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'chain result');
+      expect(chain.call).toHaveBeenCalledWith({ test: true }, undefined);
+    });
+
+    it('should handle missing sequential chain', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should handle edge method validation', async () => {
+      @AgentGraph({
+        name: 'invalid-method-agent',
+        description: 'Agent with invalid edge method'
+      })
+      class InvalidMethodAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target'
+        })
+        startToTarget(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [InvalidMethodAgent]
+      }).compile();
+
+      const agent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
+      
+      // Replace the edge method with a non-function value
+      Object.defineProperty(agent, 'startToTarget', {
+        value: 'not a function',
+        configurable: true
+      });
+      
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Node target not found in graph');
+    });
+
+    it('should handle node not found at runtime', async () => {
+      @AgentGraph({
+        name: 'runtime-error-agent',
+        description: 'Agent with runtime node error'
+      })
+      class RuntimeErrorAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { 
+            state: {
+              ...input.state,
+              context: { ...input.state.context, start: true }
+            }
+          };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          throw new Error('Node target not found in graph');
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target',
+          condition: (state: AgentState) => state.context?.start ? 'target' : undefined
+        })
+        startToTarget(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [RuntimeErrorAgent]
+      }).compile();
+
+      const agent = moduleRef.get<RuntimeErrorAgent>(RuntimeErrorAgent);
+      
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Node target not found in graph');
+    });
   });
 
   describe('Loop and Condition Handling', () => {
@@ -1596,6 +1837,21 @@ describe('BaseAgent', () => {
 
       const result = agent['checkLoopCondition'](state, node);
       expect(result).toBe(false);
+    });
+
+    it('should handle missing loop control iterations', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          maxIterations: {}
+        }
+      } as AgentState;
+
+      const result = agent['incrementLoopCount'](state, 'testLoop');
+      expect(result.loopControl.iterations).toBeDefined();
+      expect(result.loopControl.iterations.testLoop).toBe(1);
     });
   });
 
