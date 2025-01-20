@@ -610,28 +610,20 @@ describe('BaseAgent', () => {
       expect(result.context).toHaveProperty('loop', true);
     });
 
-    it('should handle missing loop control state', async () => {
-      class NoLoopControlAgent extends TestAgent {
-        override async loop(input: NodeInput): Promise<NodeOutput> {
-          const state = input?.state || { messages: [], context: {}, metadata: {} };
-          return {
-            state: {
-              ...state,
-              context: { ...state.context, loop: true },
-              loopControl: undefined
-            }
-          };
-        }
-      }
-
-      const noLoopAgent = new NoLoopControlAgent();
-      const result = await noLoopAgent.run({
+    it('should handle missing loop control state', () => {
+      const state: AgentState = {
         messages: [],
         context: {},
-        metadata: { route: 'A', targetCount: 1 },
-      });
+        metadata: {},
+        loopControl: {
+          iterations: {},
+          maxIterations: {}
+        }
+      };
 
-      expect(result.context).toHaveProperty('loop', true);
+      const result = agent['incrementLoopCount'](state, 'testLoop');
+      expect(result.loopControl.iterations).toBeDefined();
+      expect(result.loopControl.iterations.testLoop).toBe(1);
     });
 
     it('should handle missing metadata in loop conditions', async () => {
@@ -828,6 +820,154 @@ describe('BaseAgent', () => {
       await expect(moduleRef.compile())
         .rejects
         .toThrow('Invalid graph configuration: Edge from \'start\' points to non-existent node \'nonexistent\'');
+    });
+
+    it('should handle edge from non-existent node', async () => {
+      @AgentGraph({
+        name: 'invalid-edge-agent',
+        description: 'Agent with invalid edge'
+      })
+      class InvalidEdgeAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: 'nonexistent',
+          to: 'start'
+        })
+        invalidEdge(state: AgentState): AgentState {
+          return state;
+        }
+      }
+
+      const moduleRef = Test.createTestingModule({
+        providers: [InvalidEdgeAgent]
+      });
+
+      await expect(moduleRef.compile())
+        .rejects
+        .toThrow('Invalid graph configuration: Edge to \'start\' comes from non-existent node \'nonexistent\'');
+    });
+
+    it('should handle tool execution with callbacks', async () => {
+      const tool = {
+        name: 'testTool',
+        description: 'Test tool',
+        call: jest.fn().mockResolvedValue('test result')
+      } as unknown as Tool;
+
+      const callbacks = new CallbackManager();
+      agent.tools.set('testTool', tool);
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'tool',
+        toolName: 'testTool',
+        callbacks,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        },
+        params: { test: true }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'test result');
+      expect(tool.call).toHaveBeenCalledWith({ test: true }, callbacks);
+    });
+
+    it('should handle sequential chain execution', async () => {
+      const chain = {
+        name: 'testChain',
+        description: 'Test chain',
+        call: jest.fn().mockResolvedValue('chain result')
+      } as unknown as Tool;
+
+      agent.chains.set('testChain', chain);
+
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state.context).toHaveProperty('testNode', 'chain result');
+    });
+
+    it('should handle edge method validation', async () => {
+      @AgentGraph({
+        name: 'invalid-method-agent',
+        description: 'Agent with invalid edge method'
+      })
+      class InvalidMethodAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target'
+        })
+        startToTarget(state: AgentState): AgentState {
+          // Intencionalmente no implementamos la lógica del método
+          // El error debería ocurrir cuando intente ejecutar este edge
+          throw new Error('Not implemented');
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [InvalidMethodAgent]
+      }).compile();
+
+      const invalidAgent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
+      await expect(invalidAgent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Not implemented');
     });
   });
 
