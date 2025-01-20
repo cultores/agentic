@@ -949,11 +949,7 @@ describe('BaseAgent', () => {
 
         @AgentEdge({
           from: 'start',
-          to: 'target',
-          name: 'startToTarget',
-          description: 'Edge from start to target',
-          allowLoop: false,
-          priority: 1
+          to: 'target'
         })
         startToTarget(state: AgentState): AgentState {
           throw new Error('Not implemented');
@@ -964,8 +960,8 @@ describe('BaseAgent', () => {
         providers: [InvalidMethodAgent]
       }).compile();
 
-      const invalidAgent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
-      await expect(invalidAgent.run({
+      const agent = moduleRef.get<InvalidMethodAgent>(InvalidMethodAgent);
+      await expect(agent.run({
         messages: [],
         context: {},
         metadata: {}

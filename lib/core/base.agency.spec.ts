@@ -233,4 +233,28 @@ describe('BaseAgency', () => {
       description: 'Base agency implementation'
     });
   });
+
+  it('should use default config when no metadata exists', () => {
+    // Create a class that extends BaseAgency but without @Agency decorator
+    class NoDecoratorAgency extends BaseAgency {}
+    
+    // Remove metadata from both the class and its prototype chain
+    const removeMetadata = (target: any) => {
+      Reflect.deleteMetadata('agency:config', target);
+      if (target.prototype) {
+        Reflect.deleteMetadata('agency:config', target.prototype);
+      }
+      if (Object.getPrototypeOf(target)) {
+        removeMetadata(Object.getPrototypeOf(target));
+      }
+    };
+    
+    removeMetadata(NoDecoratorAgency);
+    
+    const agency = new NoDecoratorAgency();
+    const config = agency['getConfig']();
+    expect(config).toEqual({
+      name: 'unnamed-agency'
+    });
+  });
 }); 
