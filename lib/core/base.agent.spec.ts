@@ -1408,6 +1408,27 @@ describe('BaseAgent', () => {
         .rejects
         .toThrow('Unable to execute node testNode');
     });
+
+    it('should handle direct loop node execution', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testLoop',
+        type: 'loop',
+        methodName: 'testMethod',
+        maxIterations: 3,
+        loopCondition: (state: AgentState) => true
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: { initial: true },
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state).toEqual(input.state);
+    });
   });
 
   describe('Message Creation', () => {
