@@ -949,11 +949,13 @@ describe('BaseAgent', () => {
 
         @AgentEdge({
           from: 'start',
-          to: 'target'
+          to: 'target',
+          name: 'startToTarget',
+          description: 'Edge from start to target',
+          allowLoop: false,
+          priority: 1
         })
         startToTarget(state: AgentState): AgentState {
-          // Intencionalmente no implementamos la lógica del método
-          // El error debería ocurrir cuando intente ejecutar este edge
           throw new Error('Not implemented');
         }
       }
@@ -968,6 +970,170 @@ describe('BaseAgent', () => {
         context: {},
         metadata: {}
       })).rejects.toThrow('Not implemented');
+    });
+
+    it('should handle chain execution with missing chain', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'chain',
+        chainType: 'sequential',
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      await expect(agent['executeNode'](node, input))
+        .rejects
+        .toThrow('Unable to execute node testNode');
+    });
+
+    it('should handle loop node execution', async () => {
+      const node: AgentNodeDefinition = {
+        name: 'testNode',
+        type: 'loop',
+        maxIterations: 1,
+        loopCondition: () => false,
+        methodName: 'testMethod'
+      };
+
+      const input = {
+        state: {
+          messages: [],
+          context: {},
+          metadata: {}
+        }
+      };
+
+      const result = await agent['executeNode'](node, input);
+      expect(result.state).toEqual(input.state);
+    });
+
+    it('should handle missing loop control iterations', () => {
+      const state: AgentState = {
+        messages: [],
+        context: {},
+        metadata: {},
+        loopControl: {
+          iterations: {},
+          maxIterations: {}
+        }
+      };
+
+      const result = agent['incrementLoopCount'](state, 'testLoop');
+      expect(result.loopControl.iterations).toBeDefined();
+      expect(result.loopControl.iterations.testLoop).toBe(1);
+    });
+
+    it('should handle edge method not found', async () => {
+      @AgentGraph({
+        name: 'missing-method-agent',
+        description: 'Agent with missing edge method'
+      })
+      class MissingMethodAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target'
+        })
+        startToTarget(state: AgentState): AgentState {
+          throw new Error('Not implemented');
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [MissingMethodAgent]
+      }).compile();
+
+      const agent = moduleRef.get<MissingMethodAgent>(MissingMethodAgent);
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Not implemented');
+    });
+
+    it('should handle edge method error', async () => {
+      @AgentGraph({
+        name: 'error-method-agent',
+        description: 'Agent with edge method that throws error'
+      })
+      class ErrorMethodAgent extends BaseAgent {
+        @AgentNode({
+          name: 'start',
+          description: 'Start node',
+          type: 'llm'
+        })
+        async start(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentNode({
+          name: 'target',
+          description: 'Target node',
+          type: 'llm'
+        })
+        async target(input: NodeInput): Promise<NodeOutput> {
+          return { state: input.state };
+        }
+
+        @AgentEdge({
+          from: '__start__',
+          to: 'start'
+        })
+        startEdge(state: AgentState): AgentState {
+          return state;
+        }
+
+        @AgentEdge({
+          from: 'start',
+          to: 'target'
+        })
+        startToTarget(state: AgentState): AgentState {
+          throw new Error('Edge method error');
+        }
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        providers: [ErrorMethodAgent]
+      }).compile();
+
+      const agent = moduleRef.get<ErrorMethodAgent>(ErrorMethodAgent);
+      await expect(agent.run({
+        messages: [],
+        context: {},
+        metadata: {}
+      })).rejects.toThrow('Edge method error');
     });
   });
 
