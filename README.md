@@ -427,7 +427,7 @@ Frederick Bejarano Sanchez
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/nestjs/agentic/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/cultores/agentic/issues).
 
 ## 📝 Changelog
 
