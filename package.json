@@ -32,7 +32,9 @@
   "dependencies": {
     "@langchain/core": "^0.3.31",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "globby": "^14.0.0",
+    "@types/globby": "^9.1.0"
   },
   "devDependencies": {
     "@nestjs/common": "^11.0.1",
@@ -45,8 +47,6 @@
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.3",
-    "globby": "^14.0.0",
-    "@types/globby": "^9.1.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.2",
     "ts-jest": "^29.2.5",
