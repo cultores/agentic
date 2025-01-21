@@ -336,6 +336,72 @@ class WorkflowAgent extends BaseAgent {
 }
 ```
 
+### 📊 Visualization
+
+Agentic provides a built-in visualization tool to help you understand and debug your agent's flow. You can use it in three ways:
+
+1. **CLI Command**: After installing the package globally or in your project:
+```bash
+# Using npx
+npx @cultores/agentic visualize
+
+# Or if installed globally
+agentic visualize
+```
+
+2. **Package Script**: Add to your `package.json`:
+```json
+{
+  "scripts": {
+    "visualize": "@cultores/agentic visualize"
+  }
+}
+```
+
+3. **Programmatically**: Import and use in your TypeScript code:
+```typescript
+import { AgenticVisualizer } from '@cultores/agentic';
+
+// Create an instance of your agent
+const myAgent = new MyAgent();
+
+// Generate the visualization
+const visualization = AgenticVisualizer.visualize(myAgent);
+console.log(visualization);
+```
+
+The visualizer will scan your project for agent instances and generate an ASCII representation of each agent's nodes and their connections:
+
+```
+┌──────────────┐
+│  __start__   │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│    start     │
+│    (llm)     │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│   process    │
+│   (tool)     │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│    decide    │
+│    (llm)     │
+└──────────────┘
+```
+
+This visualization helps you:
+- Verify the structure of your agent's flow
+- Debug connection issues
+- Understand the execution path
+- Document your agent's architecture
+
 ### Error Handling
 
 The framework provides robust error handling:
