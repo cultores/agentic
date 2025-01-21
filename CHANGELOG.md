@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2025-01-21
+
+### Added
+- New visualization tool for agent flows
+- CLI command `agentic-visualize` for generating flow diagrams
+- Programmatic visualization API through `AgenticVisualizer`
+- ASCII-based flow diagram generation
+
+### Changed
+- Enhanced README with visualization documentation
+- Improved documentation structure and examples
+
 ## [0.1.4] - 2025-01-20
 
 ### Changed
