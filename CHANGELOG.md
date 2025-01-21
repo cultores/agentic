@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2024-03-21
+
+### Fixed
+- Install globby as a dependency instead of devDependency
+
 ## [0.1.5] - 2025-01-21
 
 ### Added
