@@ -163,3 +163,5 @@ export interface MessageConfig {
 export interface AgentEdgeDefinition extends AgentEdgeOptions {
   methodName: string;
 }
+
+export type Constructor<T> = new (...args: any[]) => T;

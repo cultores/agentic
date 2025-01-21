@@ -8,3 +8,6 @@ export * from './decorators/agent.decorators';
 
 // Interface exports
 export * from './interfaces/agent.interfaces';
+
+// Visualization exports
+export * from './visualization/visualizer';

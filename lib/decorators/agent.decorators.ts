@@ -10,6 +10,16 @@ import {
   ChainNodeDefinition,
   LoopNodeDefinition
 } from '../interfaces/agent.interfaces';
+import { AgenticVisualizer } from '../visualization/visualizer';
+
+type ClassMethodDecoratorContext<T = any, V = any> = {
+  kind: 'method';
+  name: string | symbol;
+  static: boolean;
+  private: boolean;
+  access: { has(object: T): boolean; get(object: T): V };
+  addInitializer?(initializer: () => void): void;
+};
 
 export function AgentGraph(options: AgentGraphOptions) {
   return function (target: any) {
@@ -18,9 +28,13 @@ export function AgentGraph(options: AgentGraphOptions) {
   };
 }
 
-export function AgentNode(options: AgentNodeOptions): MethodDecorator {
-  return (target: any, propertyKey: string | symbol) => {
-    const nodes = Reflect.getMetadata('nodes', target.constructor) || [];
+export function AgentNode(options: AgentNodeOptions) {
+  return function (
+    target: any,
+    context: ClassMethodDecoratorContext | PropertyKey
+  ) {
+    const propertyKey = typeof context === 'object' ? context.name : context;
+    const nodes = Reflect.getMetadata('nodes', target.constructor || target) || [];
     const methodName = propertyKey.toString();
 
     let node: AgentNodeDefinition;
@@ -76,18 +90,22 @@ export function AgentNode(options: AgentNodeOptions): MethodDecorator {
         throw new Error(`Invalid node type: ${options.type}`);
     }
 
-    Reflect.defineMetadata('nodes', [...nodes, node], target.constructor);
+    Reflect.defineMetadata('nodes', [...nodes, node], target.constructor || target);
   };
 }
 
-export function AgentEdge(options: AgentEdgeOptions): MethodDecorator {
-  return (target: any, propertyKey: string | symbol) => {
-    const edges = Reflect.getMetadata('edges', target.constructor) || [];
+export function AgentEdge(options: AgentEdgeOptions) {
+  return function (
+    target: any,
+    context: ClassMethodDecoratorContext | PropertyKey
+  ) {
+    const propertyKey = typeof context === 'object' ? context.name : context;
+    const edges = Reflect.getMetadata('edges', target.constructor || target) || [];
     const edge: AgentEdgeDefinition = {
       ...options,
       methodName: propertyKey.toString()
     };
-    Reflect.defineMetadata('edges', [...edges, edge], target.constructor);
+    Reflect.defineMetadata('edges', [...edges, edge], target.constructor || target);
   };
 }
 
@@ -95,5 +113,22 @@ export function Agency(config: any) {
   return function (target: any) {
     Reflect.defineMetadata('agency:config', config, target);
     Injectable()(target);
+  };
+}
+
+export function VisualizeOnBoot(): ClassDecorator {
+  return function (target: any) {
+    const originalOnModuleInit = target.prototype.onModuleInit;
+    
+    target.prototype.onModuleInit = async function() {
+      if (originalOnModuleInit) {
+        await originalOnModuleInit.call(this);
+      }
+      
+      console.log('\nAgentic Agency Visualization:');
+      console.log(AgenticVisualizer.visualize(this));
+    };
+    
+    return target;
   };
 }
